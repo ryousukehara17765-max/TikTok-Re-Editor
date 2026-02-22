@@ -200,6 +200,10 @@ def _split_line(line, max_display_chars):
     rest = line[split_idx:]
     if not rest or not rest.strip():
         return [line]
+    # 分割された先頭部分に句読点がなければ「、」を追加
+    _PUNCT_ENDS = ('、', '。', '！', '？', '!', '?', '．', '，')
+    if not first.endswith(_PUNCT_ENDS):
+        first = first + '、'
     return [first] + _split_line(rest, max_display_chars)
 
 
