@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import tempfile
 from PIL import Image, ImageDraw, ImageFont
+from utils import normalize_for_timing, remove_punctuation_for_display
 from utils.voicevox import VoiceVoxAPI
 
 
@@ -272,8 +273,7 @@ class VideoGeneratorFFmpeg:
         for line in display_text.strip().split('\n'):
             line = line.strip()
             if line:
-                clean_line = line.replace('、', '').replace('。', '').replace('，', '').replace('．', '')
-                display_lines.append(clean_line)
+                display_lines.append(remove_punctuation_for_display(line))
 
         # 行数が異なる場合は警告し、短い方に合わせる
         if len(audio_lines) != len(display_lines):
@@ -524,8 +524,7 @@ class VideoGeneratorFFmpeg:
         for line in display_text.strip().split('\n'):
             line = line.strip()
             if line:
-                clean_line = line.replace('、', '').replace('。', '').replace('！', '').replace('？', '')
-                display_lines.append(clean_line)
+                display_lines.append(remove_punctuation_for_display(line))
 
         # 行数と音声セグメント数が一致するか確認
         if len(display_lines) != len(audio_segments):
@@ -668,6 +667,9 @@ class VideoGeneratorFFmpeg:
 
         total_clips = len(segments)
         total_audio_duration = self._get_audio_duration(audio_path)
+        frame_duration = 1.0 / fps
+
+        print(f"[VIDEO TIMING] Audio duration: {total_audio_duration:.4f}s, FPS: {fps}, Frame duration: {frame_duration:.6f}s")
 
         temp_dir = tempfile.mkdtemp()
 
@@ -676,8 +678,11 @@ class VideoGeneratorFFmpeg:
             #    FFmpeg concat demuxerで一括処理するため、個別エンコード時の
             #    フレーム境界丸め誤差の蓄積が発生しない
 
-            # リードイン（音声冒頭の無音区間）を検出
-            lead_in_duration = segments[0]["start"] if segments[0]["start"] > 0.01 else 0
+            # FIX 3: リードイン（音声冒頭の無音区間）をフレーム単位で検出
+            raw_lead_in = segments[0]["start"]
+            lead_in_frames = round(raw_lead_in / frame_duration)
+            lead_in_duration = lead_in_frames * frame_duration if lead_in_frames >= 1 else 0
+            print(f"[VIDEO TIMING] Lead-in: raw={raw_lead_in:.4f}s, frames={lead_in_frames}, aligned={lead_in_duration:.6f}s")
 
             durations = []
             for i in range(total_clips):
@@ -688,10 +693,25 @@ class VideoGeneratorFFmpeg:
                 else:
                     end_time = total_audio_duration
 
-                duration = end_time - start_time
-                if duration < 1.0 / fps:
-                    duration = 1.0 / fps  # 最小1フレーム
+                raw_duration = end_time - start_time
+
+                # FIX 2: durationをフレーム境界に丸める
+                num_frames = max(1, round(raw_duration / frame_duration))
+                duration = num_frames * frame_duration
+
                 durations.append(duration)
+
+            # FIX 5: 映像合計時間を音声に一致させる（最終セグメントで調整）
+            total_video_duration = lead_in_duration + sum(durations)
+            duration_diff = total_audio_duration - total_video_duration
+            if abs(duration_diff) > 0.001 and durations:
+                adjusted = durations[-1] + duration_diff
+                if adjusted >= frame_duration:
+                    print(f"[VIDEO TIMING] Adjusting last segment: {durations[-1]:.6f}s -> {adjusted:.6f}s (diff={duration_diff:+.6f}s)")
+                    durations[-1] = adjusted
+
+            total_video_duration = lead_in_duration + sum(durations)
+            print(f"[VIDEO TIMING] Total video: {total_video_duration:.4f}s, Total audio: {total_audio_duration:.4f}s, Diff: {total_video_duration - total_audio_duration:.6f}s")
 
             # 2. 全テロップ画像を生成
             img_transparent_paths = []
@@ -701,7 +721,7 @@ class VideoGeneratorFFmpeg:
             for i, seg in enumerate(segments):
                 clip_num = i + 1
                 text = seg["text"].strip()
-                display_text = text.replace('、', '').replace('。', '').replace('，', '').replace('．', '')
+                display_text = remove_punctuation_for_display(text)
 
                 print(f"セグメント {clip_num}/{total_clips}: {display_text[:20]}... (duration={durations[i]:.3f}s)")
 

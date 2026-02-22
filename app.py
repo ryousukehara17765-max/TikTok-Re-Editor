@@ -3,6 +3,7 @@ import os
 import tempfile
 import base64
 from dotenv import load_dotenv
+from utils import normalize_for_timing
 from utils.transcription import GladiaAPI
 from utils.text_formatter import GeminiFormatter
 from utils.voicevox import VoiceVoxAPI
@@ -10,6 +11,89 @@ from utils.video_generator_ffmpeg import VideoGeneratorFFmpeg
 
 # 環境変数を読み込み
 load_dotenv()
+
+
+def calculate_line_timestamps(lines, words):
+    """文字レベルの補間で各行のタイムスタンプを計算（単語境界ズレ解消）
+
+    Args:
+        lines: テキスト行のリスト
+        words: Gladiaの単語タイムスタンプリスト [{"word": "...", "start": 0.0, "end": 0.5}, ...]
+
+    Returns:
+        list: [{"start": 0.0, "end": 1.5, "text": "テキスト"}, ...]
+    """
+    # 1. 文字単位のタイムラインを構築
+    #    各単語の時間をその文字数で均等に分配
+    char_times = []  # [(char, start, end), ...]
+    for w in words:
+        word_norm = normalize_for_timing(w['word'])
+        if not word_norm:
+            continue
+        char_count = len(word_norm)
+        word_duration = w['end'] - w['start']
+        for ci, ch in enumerate(word_norm):
+            ch_start = w['start'] + (word_duration * ci / char_count)
+            ch_end = w['start'] + (word_duration * (ci + 1) / char_count)
+            char_times.append((ch, ch_start, ch_end))
+
+    # 2. 各行の正規化文字列を文字タイムラインにマッチング
+    segments = []
+    char_idx = 0
+
+    for line_idx, line in enumerate(lines):
+        line_norm = normalize_for_timing(line)
+        if not line_norm:
+            continue
+
+        line_start_idx = char_idx
+        # この行の文字数分だけ文字タイムラインを消費
+        for _ in line_norm:
+            if char_idx < len(char_times):
+                char_idx += 1
+
+        line_end_idx = char_idx - 1 if char_idx > line_start_idx else line_start_idx
+
+        # タイムスタンプを設定
+        if line_start_idx < len(char_times) and line_end_idx < len(char_times):
+            start_time = char_times[line_start_idx][1]
+            end_time = char_times[line_end_idx][2]
+        else:
+            # フォールバック: 均等分割
+            total_duration = words[-1]['end'] if words else 1
+            segment_duration = total_duration / len(lines)
+            start_time = line_idx * segment_duration
+            end_time = (line_idx + 1) * segment_duration
+
+        segments.append({
+            "start": start_time,
+            "end": end_time,
+            "text": line
+        })
+
+    return segments
+
+
+def validate_segments(segments):
+    """セグメントの順序・duration を検証してログ出力
+
+    Returns:
+        bool: 全てのバリデーションに通ったらTrue
+    """
+    valid = True
+    for i, seg in enumerate(segments):
+        duration = seg["end"] - seg["start"]
+        if duration <= 0:
+            print(f"[TIMING] WARNING: segment {i} has non-positive duration ({duration:.4f}s): {seg['text'][:20]}")
+            valid = False
+        if i > 0 and seg["start"] < segments[i - 1]["start"]:
+            print(f"[TIMING] WARNING: segment {i} starts before segment {i-1} ({seg['start']:.4f} < {segments[i-1]['start']:.4f})")
+            valid = False
+        print(f"[TIMING] segment {i}: {seg['start']:.4f}s - {seg['end']:.4f}s ({duration:.4f}s) | {seg['text'][:30]}")
+    if valid:
+        print(f"[TIMING] All {len(segments)} segments validated OK")
+    return valid
+
 
 # ページ設定
 st.set_page_config(
@@ -807,68 +891,10 @@ with tab4:
                 lines = [line.strip() for line in edited_text.strip().split('\n') if line.strip()]
                 gladia_words = st.session_state.get('gladia_words', [])
 
-                # 単語レベルのタイムスタンプを使って各行のタイミングを計算
-                def calculate_line_timestamps(lines, words):
-                    """文字レベルの補間で各行のタイムスタンプを計算（単語境界ズレ解消）"""
-                    import re
-
-                    # 句読点を除去する関数
-                    def normalize(text):
-                        return re.sub(r'[、。,.\s　]', '', text)
-
-                    # 1. 文字単位のタイムラインを構築
-                    #    各単語の時間をその文字数で均等に分配
-                    char_times = []  # [(char, start, end), ...]
-                    for w in words:
-                        word_norm = normalize(w['word'])
-                        if not word_norm:
-                            continue
-                        char_count = len(word_norm)
-                        word_duration = w['end'] - w['start']
-                        for ci, ch in enumerate(word_norm):
-                            ch_start = w['start'] + (word_duration * ci / char_count)
-                            ch_end = w['start'] + (word_duration * (ci + 1) / char_count)
-                            char_times.append((ch, ch_start, ch_end))
-
-                    # 2. 各行の正規化文字列を文字タイムラインにマッチング
-                    segments = []
-                    char_idx = 0
-
-                    for line_idx, line in enumerate(lines):
-                        line_norm = normalize(line)
-                        if not line_norm:
-                            continue
-
-                        line_start_idx = char_idx
-                        # この行の文字数分だけ文字タイムラインを消費
-                        for _ in line_norm:
-                            if char_idx < len(char_times):
-                                char_idx += 1
-
-                        line_end_idx = char_idx - 1 if char_idx > line_start_idx else line_start_idx
-
-                        # タイムスタンプを設定
-                        if line_start_idx < len(char_times) and line_end_idx < len(char_times):
-                            start_time = char_times[line_start_idx][1]
-                            end_time = char_times[line_end_idx][2]
-                        else:
-                            # フォールバック: 均等分割
-                            total_duration = words[-1]['end'] if words else 1
-                            segment_duration = total_duration / len(lines)
-                            start_time = line_idx * segment_duration
-                            end_time = (line_idx + 1) * segment_duration
-
-                        segments.append({
-                            "start": start_time,
-                            "end": end_time,
-                            "text": line
-                        })
-
-                    return segments
-
                 if gladia_words:
                     # 単語レベルのタイムスタンプを使用
                     segments = calculate_line_timestamps(lines, gladia_words)
+                    validate_segments(segments)
                     status_text.text(f"単語レベルのタイムスタンプで同期: {len(segments)}行")
                 else:
                     # フォールバック: 均等分割
@@ -1168,51 +1194,9 @@ if st.session_state.formatted_text:
                     if result and result.get("words"):
                         gladia_words = result["words"]
 
-                        # 単語レベルのタイムスタンプを使って各行のタイミングを計算
-                        import re
-                        def normalize(text):
-                            return re.sub(r'[、。,.\s　]', '', text)
-
-                        segments = []
-                        word_index = 0
-
-                        for line_idx, line in enumerate(lines):
-                            line_norm = normalize(line)
-                            if not line_norm:
-                                continue
-
-                            start_word_idx = word_index
-                            chars_matched = 0
-
-                            while word_index < len(gladia_words) and chars_matched < len(line_norm):
-                                word = gladia_words[word_index]['word']
-                                word_norm = normalize(word)
-                                chars_matched += len(word_norm)
-                                word_index += 1
-
-                            end_word_idx = word_index - 1 if word_index > start_word_idx else start_word_idx
-
-                            if start_word_idx < len(gladia_words) and end_word_idx < len(gladia_words):
-                                start_time = gladia_words[start_word_idx]['start']
-                                end_time = gladia_words[end_word_idx]['end']
-                                # end_timeがstart_time以下の場合は修正
-                                if end_time <= start_time:
-                                    end_time = start_time + 0.5
-                            else:
-                                total_duration = gladia_words[-1]['end'] if gladia_words else 1
-                                segment_duration = total_duration / len(lines)
-                                start_time = line_idx * segment_duration
-                                end_time = (line_idx + 1) * segment_duration
-
-                            # 最小持続時間を保証（0.1秒以上）
-                            if end_time - start_time < 0.1:
-                                end_time = start_time + 0.5
-
-                            segments.append({
-                                "start": start_time,
-                                "end": end_time,
-                                "text": line
-                            })
+                        # 文字レベル補間で各行のタイミングを計算（Tab 4と同じアルゴリズム）
+                        segments = calculate_line_timestamps(lines, gladia_words)
+                        validate_segments(segments)
 
                         status_text.text(f"タイムスタンプ取得完了: {len(segments)}行")
                     else:
