@@ -3,7 +3,7 @@ import os
 import tempfile
 import base64
 from dotenv import load_dotenv
-from utils.text_normalize import normalize_for_timing
+from utils.text_normalize import normalize_for_timing, remove_punctuation_for_display
 from utils.transcription import GladiaAPI
 from utils.text_formatter import GeminiFormatter
 from utils.voicevox import VoiceVoxAPI
@@ -109,6 +109,39 @@ def validate_segments(segments):
     if valid:
         print(f"[TIMING] All {len(segments)} segments validated OK")
     return valid
+
+
+MAX_DISPLAY_CHARS = 14
+
+
+def split_long_lines(text, max_display_chars=MAX_DISPLAY_CHARS):
+    """表示文字数が上限を超える行を自動分割"""
+    result_lines = []
+    for line in text.split('\n'):
+        display_count = 0
+        current = []
+        for ch in line:
+            is_display = (remove_punctuation_for_display(ch) != '')
+            current.append(ch)
+            if is_display:
+                display_count += 1
+            if display_count >= max_display_chars:
+                result_lines.append(''.join(current))
+                current = []
+                display_count = 0
+        if current:
+            result_lines.append(''.join(current))
+    return '\n'.join(result_lines)
+
+
+def check_line_overflow(text, max_display_chars=MAX_DISPLAY_CHARS):
+    """はみ出す行のリストを返す [(行番号, 表示文字数, 行テキスト), ...]"""
+    overflows = []
+    for i, line in enumerate(text.split('\n'), 1):
+        display_count = len(remove_punctuation_for_display(line))
+        if display_count > max_display_chars:
+            overflows.append((i, display_count, line))
+    return overflows
 
 
 # ページ設定
@@ -666,6 +699,7 @@ with tab1:
                             formatted = None
 
                         if formatted:
+                            formatted = split_long_lines(formatted)
                             st.session_state.formatted_text = formatted
                             progress_bar.progress(80)
                             filename = gemini.generate_filename(formatted)
@@ -731,6 +765,7 @@ with tab2:
                                 formatted_lines.append(line + '、')
 
                     formatted_text = '\n'.join(formatted_lines)
+                    formatted_text = split_long_lines(formatted_text)
                     st.session_state.formatted_text = formatted_text
                     progress_bar.progress(80)
 
@@ -776,6 +811,7 @@ with tab3:
                         formatted_lines.append(line + '、')
 
             formatted_text = '\n'.join(formatted_lines)
+            formatted_text = split_long_lines(formatted_text)
             st.session_state.formatted_text = formatted_text
             st.session_state.transcribed_text = direct_text
             progress_bar.progress(50)
@@ -869,7 +905,7 @@ with tab4:
                         st.session_state.audio_file_ext = os.path.splitext(uploaded_audio.name)[1]  # .wav, .mp3等
                         st.session_state.filename = audio_filename
                         st.session_state.audio_upload_mode = True
-                        st.session_state.audio_text_editor = formatted_text
+                        st.session_state.audio_text_editor = split_long_lines(formatted_text)
 
                         st.success(f"Complete! 整形済みテキスト生成完了（{len(gladia_words)}単語のタイムスタンプ取得）")
                         st.rerun()
@@ -907,11 +943,18 @@ with tab4:
 
         st.success(f"**{len(lines)}行** / {word_count}単語のタイムスタンプで同期")
 
+        # はみ出しバリデーション
+        audio_overflow = check_line_overflow(edited_text)
+        if audio_overflow:
+            st.error(f"テロップはみ出し: {len(audio_overflow)}行が{MAX_DISPLAY_CHARS}表示文字を超えています。修正してください。")
+            for line_no, display_cnt, line_text in audio_overflow:
+                st.warning(f"行{line_no}: {display_cnt}文字 → 「{line_text}」")
+
         # 3. 動画生成
         st.markdown("---")
         st.markdown("### 3. 動画を生成")
 
-        if st.button("GENERATE VIDEO", key="generate_audio_upload_video_btn"):
+        if st.button("GENERATE VIDEO", key="generate_audio_upload_video_btn", disabled=bool(audio_overflow)):
             try:
                 progress_bar = st.progress(0)
                 status_text = st.empty()
@@ -1016,7 +1059,8 @@ with tab4:
             data=st.session_state.generated_video,
             file_name=f"{st.session_state.filename}.mov",
             mime="video/quicktime",
-            key="download_audio_upload_video"
+            key="download_audio_upload_video",
+            disabled=bool(audio_overflow)
         )
 
         # SNSコンテンツ生成
@@ -1125,13 +1169,21 @@ if st.session_state.formatted_text:
         # 編集されたテキストをセッションに保存
         st.session_state.text_editor = current_text
 
+        # はみ出しバリデーション
+        text_overflow = check_line_overflow(current_text)
+        if text_overflow:
+            st.error(f"テロップはみ出し: {len(text_overflow)}行が{MAX_DISPLAY_CHARS}表示文字を超えています。修正してください。")
+            for line_no, display_cnt, line_text in text_overflow:
+                st.warning(f"行{line_no}: {display_cnt}文字 → 「{line_text}」")
+
         formatted_main_text = format_text_for_download(current_text)
         st.download_button(
             label="DOWNLOAD TEXT",
             data=formatted_main_text,
             file_name=f"{st.session_state.filename}.txt",
             mime="text/plain",
-            key="download_text"
+            key="download_text",
+            disabled=bool(text_overflow)
         )
 
     with col_hiragana:
@@ -1191,7 +1243,7 @@ if st.session_state.formatted_text:
     if uploaded_audio_sec3:
         st.audio(uploaded_audio_sec3, format=f"audio/{uploaded_audio_sec3.name.split('.')[-1]}")
 
-        if st.button("GENERATE VIDEO", key="generate_video_sec3_btn"):
+        if st.button("GENERATE VIDEO", key="generate_video_sec3_btn", disabled=bool(text_overflow)):
             try:
                 progress_bar = st.progress(0)
                 status_text = st.empty()
