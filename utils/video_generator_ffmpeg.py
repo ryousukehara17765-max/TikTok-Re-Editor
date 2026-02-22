@@ -690,16 +690,30 @@ class VideoGeneratorFFmpeg:
             print(f"[VIDEO TIMING] Lead-in: raw={raw_lead_in:.4f}s, frames={lead_in_frames}, absorbed into first segment")
 
             # FIX 8: テロップ切り替えタイミング
-            #   次セグメントの音声開始時刻 + 小さなバッファでテロップ切り替え。
-            #   バッファにより、現テロップが次の音声開始後もわずかに残り、
-            #   視聴者が「言い切り」を確認できる余裕を持たせる。
+            #   現セグメント音声終了後、最低0.3sの余韻を確保。
+            #   ギャップが十分大きい場合は次セグメント音声開始で切り替え（従来通り）。
+            #   ギャップが小さい場合のみ、次セグメント音声に最大0.15s食い込んで
+            #   テロップを延長し、「言い切り」感を確保する。
             #   絶対フレーム位置から差分でdurationを算出し、累積丸め誤差も防止。
-            TELOP_HANG_TIME = 0.25  # テロップ残留バッファ（秒）
+            MIN_HANG_AFTER_END = 0.3   # 音声終了後の最低残留時間
+            MAX_OVERLAP_INTO_NEXT = 0.15  # 次セグメント音声への最大食い込み
             durations = []
             prev_frame = 0
             for i in range(total_clips):
                 if i < total_clips - 1:
-                    boundary_time = segments[i + 1]["start"] + TELOP_HANG_TIME
+                    current_end = segments[i]["end"]
+                    next_start = segments[i + 1]["start"]
+                    gap = next_start - current_end
+                    if gap >= MIN_HANG_AFTER_END:
+                        # ギャップ十分: 次セグメント開始で切り替え（従来通り）
+                        boundary_time = next_start
+                    else:
+                        # ギャップ不足: 言い切り確保のため延長（上限あり）
+                        desired = current_end + MIN_HANG_AFTER_END
+                        capped = next_start + MAX_OVERLAP_INTO_NEXT
+                        boundary_time = min(desired, capped)
+                        boundary_time = max(boundary_time, next_start)
+                        print(f"[VIDEO TIMING] Seg {i}: gap={gap:.3f}s < {MIN_HANG_AFTER_END}s, boundary={boundary_time:.3f}s (overlap={boundary_time - next_start:.3f}s)")
                 else:
                     boundary_time = total_audio_duration
 
