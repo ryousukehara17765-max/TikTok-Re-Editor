@@ -1084,30 +1084,6 @@ with tab4:
                     validate_segments(segments)
                     status_text.text(f"単語レベルのタイムスタンプで同期: {len(segments)}行")
 
-                    # デバッグ情報をセッションに保存
-                    debug_lines = []
-                    debug_lines.append("**Gladia単語タイムスタンプ（最初の30語）:**")
-                    for wi, w in enumerate(gladia_words[:30]):
-                        debug_lines.append(f"  [{wi}] {w['start']:.2f}-{w['end']:.2f}s: '{w['word']}'")
-                    debug_lines.append("")
-                    debug_lines.append("**計算されたセグメント:**")
-                    for si, seg in enumerate(segments):
-                        debug_lines.append(f"  [{si}] {seg['start']:.2f}-{seg['end']:.2f}s: '{seg['text'][:25]}'")
-                    debug_lines.append("")
-                    debug_lines.append("**テロップ切り替えタイミング:**")
-                    for si in range(len(segments) - 1):
-                        cur_end = segments[si]['end']
-                        next_start = segments[si+1]['start']
-                        gap = next_start - cur_end
-                        if gap >= 0.3:
-                            boundary = next_start
-                        else:
-                            boundary = min(cur_end + 0.3, next_start + 0.15)
-                            boundary = max(boundary, next_start)
-                        overlap = boundary - next_start
-                        extra = f" (延長+{overlap:.2f}s)" if overlap > 0.001 else ""
-                        debug_lines.append(f"  テロップ{si}→{si+1}: {boundary:.3f}s{extra} 「{segments[si+1]['text'][:15]}」")
-                    st.session_state['timing_debug'] = debug_lines
                 else:
                     # フォールバック: 均等分割
                     gladia_segments = st.session_state.timestamped_segments
@@ -1199,15 +1175,6 @@ with tab4:
             key="download_audio_upload_video",
             disabled=bool(audio_overflow)
         )
-
-        # デバッグ情報（セッションに保存されたもの）
-        if st.session_state.get('timing_debug'):
-            with st.expander("タイミングデバッグ情報", expanded=True):
-                for line in st.session_state['timing_debug']:
-                    if line.startswith("**"):
-                        st.markdown(line)
-                    else:
-                        st.text(line)
 
         # SNSコンテンツ生成
         st.markdown("---")
@@ -1431,22 +1398,6 @@ if st.session_state.formatted_text:
 
                         status_text.text(f"タイムスタンプ取得完了: {len(segments)}行")
 
-                        # デバッグ情報をセッションに保存（ボタン処理後も表示するため）
-                        debug_lines = []
-                        debug_lines.append("**Gladia単語タイムスタンプ（最初の30語）:**")
-                        for wi, w in enumerate(gladia_words[:30]):
-                            debug_lines.append(f"  [{wi}] {w['start']:.2f}-{w['end']:.2f}s: '{w['word']}'")
-                        debug_lines.append("")
-                        debug_lines.append("**計算されたセグメント:**")
-                        for si, seg in enumerate(segments):
-                            debug_lines.append(f"  [{si}] {seg['start']:.2f}-{seg['end']:.2f}s: '{seg['text'][:25]}'")
-                        debug_lines.append("")
-                        debug_lines.append("**テロップ切り替えタイミング（実際のビデオ境界 = セグメント開始+0.25s）:**")
-                        for si in range(len(segments) - 1):
-                            seg_start = segments[si+1]['start']
-                            actual_boundary = seg_start + 0.25  # TELOP_HANG_TIMEと同じ値
-                            debug_lines.append(f"  テロップ{si}→{si+1}: セグメント開始{seg_start:.3f}s → 実切替{actual_boundary:.3f}s 「{segments[si+1]['text'][:15]}」")
-                        st.session_state['timing_debug'] = debug_lines
                     else:
                         if result is None:
                             st.error("タイムスタンプの取得に失敗しました（音声アップロードまたは文字起こしエラー）")
@@ -1531,14 +1482,6 @@ if st.session_state.formatted_text:
             key="download_video_sec3"
         )
 
-    # デバッグ情報（セッションに保存されたもの）
-    if st.session_state.get('timing_debug'):
-        with st.expander("タイミングデバッグ情報", expanded=True):
-            for line in st.session_state['timing_debug']:
-                if line.startswith("**"):
-                    st.markdown(line)
-                else:
-                    st.text(line)
 
     # セクション4: SNSコンテンツ生成
     st.header("4. タイトル・紹介文・ハッシュタグ生成")
