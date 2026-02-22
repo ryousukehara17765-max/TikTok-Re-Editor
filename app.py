@@ -14,11 +14,12 @@ load_dotenv()
 
 
 def calculate_line_timestamps(lines, words):
-    """逐次テキストマッチングで各行のタイムスタンプを計算
+    """単語レベルのタイムスタンプマッチングで各行の表示時間を計算
 
-    Gladiaの文字起こしテキストに対して各行を順にマッチングし、
-    正確なタイムスタンプを取得する。完全一致できない場合は
-    あいまいマッチングで最良位置を探索する。
+    Gladiaの文字起こしに対して各行を順にマッチングし、
+    単語境界の実測タイムスタンプを使用して正確なタイミングを取得する。
+    文字レベルの補間ではなく単語レベルの実測値を使うことで、
+    ユーザーテキストとGladiaテキストの文字数不一致にも対応。
 
     Args:
         lines: テキスト行のリスト
@@ -27,27 +28,31 @@ def calculate_line_timestamps(lines, words):
     Returns:
         list: [{"start": 0.0, "end": 1.5, "text": "テキスト"}, ...]
     """
-    # 1. 文字単位のタイムラインを構築
-    #    各単語の時間をその文字数で均等に分配
-    char_times = []  # [(char, start, end), ...]
+    # 1. 単語レベルのタイムラインを構築
+    word_entries = []  # [{'norm', 'start', 'end', 'text_start', 'text_end'}]
+    gladia_text = ''
     for w in words:
         word_norm = normalize_for_timing(w['word'])
         if not word_norm:
             continue
-        char_count = len(word_norm)
-        word_duration = w['end'] - w['start']
-        for ci, ch in enumerate(word_norm):
-            ch_start = w['start'] + (word_duration * ci / char_count)
-            ch_end = w['start'] + (word_duration * (ci + 1) / char_count)
-            char_times.append((ch, ch_start, ch_end))
+        text_start = len(gladia_text)
+        gladia_text += word_norm
+        text_end = len(gladia_text)
+        word_entries.append({
+            'norm': word_norm,
+            'start': w['start'],
+            'end': w['end'],
+            'text_start': text_start,
+            'text_end': text_end
+        })
 
-    total_gladia_chars = len(char_times)
+    total_gladia_chars = len(gladia_text)
 
     # ユーザーテキストの正規化
     line_norms = [normalize_for_timing(line) for line in lines]
     total_user_chars = sum(len(ln) for ln in line_norms)
 
-    print(f"[TIMING] User chars: {total_user_chars}, Gladia chars: {total_gladia_chars}, Diff: {total_user_chars - total_gladia_chars}")
+    print(f"[TIMING] User chars: {total_user_chars}, Gladia chars: {total_gladia_chars}, Words: {len(word_entries)}")
 
     # フォールバック: どちらかが0の場合は均等分割
     if total_gladia_chars == 0 or total_user_chars == 0:
@@ -56,13 +61,10 @@ def calculate_line_timestamps(lines, words):
         return [{"start": i * segment_duration, "end": (i + 1) * segment_duration, "text": line}
                 for i, line in enumerate(lines)]
 
-    # 2. Gladiaテキスト全文を構築
-    gladia_text = ''.join(ch for ch, _, _ in char_times)
-
-    # 3. 逐次マッチング: 各行をGladiaテキスト内で順に探索
+    # 2. Phase 1: 各行のGladiaテキスト内での開始位置を逐次探索
     search_pos = 0
     cumulative_user_chars = 0
-    segments = []
+    matches = []  # [(gladia_pos, line_idx, line, line_norm)]
 
     for line_idx, line in enumerate(lines):
         line_norm = line_norms[line_idx]
@@ -74,13 +76,13 @@ def calculate_line_timestamps(lines, words):
         expected_pos = round((cumulative_user_chars / total_user_chars) * total_gladia_chars)
         scan_end = min(max(expected_pos + line_len * 2, search_pos + line_len * 5), total_gladia_chars)
 
-        # 完全一致を試みる（search_posから前方探索）
+        # 完全一致を試みる
         match_pos = gladia_text.find(line_norm, search_pos, scan_end)
 
         if match_pos >= 0:
             pos = match_pos
         else:
-            # あいまいマッチ: search_posからスライディングウィンドウ探索
+            # あいまいマッチ: スライディングウィンドウ探索
             best_pos = search_pos
             best_score = -1
             fuzzy_end = min(scan_end, total_gladia_chars - line_len + 1)
@@ -95,17 +97,39 @@ def calculate_line_timestamps(lines, words):
             else:
                 pos = best_pos
 
-        # タイムスタンプ取得
         pos = min(pos, total_gladia_chars - 1)
-        end_pos = min(pos + line_len - 1, total_gladia_chars - 1)
-
-        start_time = char_times[pos][1]
-        end_time = char_times[end_pos][2]
-
-        print(f"[TIMING] Line {line_idx}: pos={pos}, '{line_norm[:15]}' -> {start_time:.3f}s-{end_time:.3f}s")
-
-        search_pos = end_pos + 1
+        matches.append((pos, line_idx, line, line_norm))
+        search_pos = pos + len(line_norm)
         cumulative_user_chars += line_len
+
+    # 3. 単語境界ルックアップ
+    def find_word_at(text_pos):
+        """指定テキスト位置を含む単語のインデックスを返す"""
+        for i, w in enumerate(word_entries):
+            if w['text_start'] <= text_pos < w['text_end']:
+                return i
+        return len(word_entries) - 1
+
+    # 4. Phase 2: 単語境界からタイムスタンプを取得
+    #    各行のend = 次の行の開始位置の直前の単語（文字数不一致に対応）
+    segments = []
+    for i, (pos, line_idx, line, line_norm) in enumerate(matches):
+        # 開始: マッチ位置の単語の実測開始時刻
+        start_word_idx = find_word_at(pos)
+        start_time = word_entries[start_word_idx]['start']
+
+        # 終了: 次の行の開始位置直前の単語の実測終了時刻
+        if i < len(matches) - 1:
+            next_pos = matches[i + 1][0]
+            end_text_pos = max(pos, next_pos - 1)
+            end_word_idx = find_word_at(end_text_pos)
+        else:
+            end_word_idx = len(word_entries) - 1
+
+        end_time = word_entries[end_word_idx]['end']
+
+        print(f"[TIMING] Line {line_idx}: pos={pos}, words[{start_word_idx}..{end_word_idx}], "
+              f"'{line_norm[:15]}' -> {start_time:.3f}s-{end_time:.3f}s")
 
         segments.append({
             "start": start_time,
