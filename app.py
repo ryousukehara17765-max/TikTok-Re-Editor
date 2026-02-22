@@ -115,6 +115,8 @@ MAX_DISPLAY_CHARS = 14
 
 # 分割候補: 助詞・接続助詞・動詞終止・括弧閉じの後ろで区切る
 _SPLIT_AFTER = set('をにはがでともへてる】」』）')
+# 強い境界: トピック(は)・括弧閉じは中央バランスより優先
+_STRONG_SPLIT = set('は】」』）')
 _MIN_SPLIT_SEGMENT = 4
 
 
@@ -132,20 +134,29 @@ def _split_line(line, max_display_chars):
     if display_len <= max_display_chars:
         return [line]
 
-    target = display_len / 2  # バランスの良い分割を狙う
-
-    # 分割候補を収集（助詞・括弧閉じ等の後ろ）
+    # 分割候補を収集
     candidates = []
     display_count = 0
     for i, ch in enumerate(line):
         if remove_punctuation_for_display(ch) != '':
             display_count += 1
-        if ch in _SPLIT_AFTER and _MIN_SPLIT_SEGMENT <= display_count <= max_display_chars:
-            candidates.append((i + 1, display_count))
+        is_split = ch in _SPLIT_AFTER
+        # 「ない」パターン: な の直後の い も分割候補
+        if not is_split and ch == 'い' and i > 0 and line[i - 1] == 'な':
+            is_split = True
+        if is_split and _MIN_SPLIT_SEGMENT <= display_count <= max_display_chars:
+            remaining = display_len - display_count
+            candidates.append((i + 1, display_count, remaining, ch in _STRONG_SPLIT))
 
     if candidates:
-        # targetに最も近い候補（同距離なら大きい方優先）
-        best = min(candidates, key=lambda c: (abs(c[1] - target), -c[1]))
+        # 優先1: 強い境界（は・】等）で最も後ろ（第2部分が5文字以上）
+        strong = [c for c in candidates if c[3] and c[2] >= 5]
+        if strong:
+            best = max(strong, key=lambda c: c[1])
+        else:
+            # 優先2: 全候補から中央に最も近い（同距離なら大きい方優先）
+            target = display_len / 2
+            best = min(candidates, key=lambda c: (abs(c[1] - target), -c[1]))
         split_idx = best[0]
     else:
         # フォールバック：上限で強制分割（句読点は前行に残す）
