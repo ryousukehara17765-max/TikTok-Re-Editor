@@ -45,9 +45,11 @@ print(f"[INFO] ffmpeg: {FFMPEG_BIN}, ffprobe: {FFPROBE_BIN}")
 class VideoGeneratorFFmpeg:
     """Pillow + FFmpegで動画生成（高速・高品質）"""
 
-    # 縦書き時に回転が必要な文字
-    VERTICAL_ROTATE_CHARS = {'ー', '〜', '～', '－', '-', '―', '‐', '–', '—', '=', '＝', '+', '＋', '<', '>', '＜', '＞',
-                              '【', '】', '「', '」', '『', '』', '（', '）', '(', ')', '[', ']', '［', '］', '〈', '〉', '《', '》', '〔', '〕'}
+    # 縦書き時に90°反時計回り(CCW)で回転する文字（ー→縦棒）
+    VERTICAL_ROTATE_CHARS = {'ー', '〜', '～', '－', '-', '―', '‐', '–', '—', '=', '＝', '+', '＋', '<', '>', '＜', '＞'}
+
+    # 縦書き時に90°時計回り(CW)で回転する括弧類（向きを正しくするため逆回転）
+    VERTICAL_ROTATE_BRACKETS = {'【', '】', '「', '」', '『', '』', '（', '）', '(', ')', '[', ']', '［', '］', '〈', '〉', '《', '》', '〔', '〕'}
 
     # 小書き文字（右に寄せる）
     SMALL_CHARS = {'っ', 'ぁ', 'ぃ', 'ぅ', 'ぇ', 'ぉ', 'ゃ', 'ゅ', 'ょ', 'ゎ',
@@ -151,7 +153,7 @@ class VideoGeneratorFFmpeg:
         # 文字情報を収集
         char_info = []
         for char in text:
-            needs_rotation = char in self.VERTICAL_ROTATE_CHARS
+            needs_rotation = char in self.VERTICAL_ROTATE_CHARS or char in self.VERTICAL_ROTATE_BRACKETS
             is_small = char in self.SMALL_CHARS
             char_info.append((char, needs_rotation, is_small))
 
@@ -196,8 +198,9 @@ class VideoGeneratorFFmpeg:
                 # 文字を画像の中央に描画
                 char_draw.text((img_size // 2, img_size // 2), char, font=font, fill=(0, 0, 0, 255), anchor="mm")
 
-                # 90度回転
-                char_img = char_img.rotate(90, expand=False, resample=Image.BICUBIC)
+                # 括弧は時計回り(-90°)、その他は反時計回り(90°)
+                angle = -90 if char in self.VERTICAL_ROTATE_BRACKETS else 90
+                char_img = char_img.rotate(angle, expand=False, resample=Image.BICUBIC)
 
                 # 回転後の文字位置を取得して中央揃え
                 rotated_bbox = char_img.getbbox()

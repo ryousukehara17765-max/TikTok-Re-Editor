@@ -70,27 +70,30 @@ def calculate_line_timestamps(lines, words):
             continue
         line_len = len(line_norm)
 
-        # 比例位置を推定（探索範囲のガイド）
+        # 探索範囲: search_posから前方を探索（比例位置もカバー）
         expected_pos = round((cumulative_user_chars / total_user_chars) * total_gladia_chars)
-        scan_start = max(search_pos, expected_pos - line_len)
-        scan_end = min(max(expected_pos + line_len * 3, search_pos + line_len * 3), total_gladia_chars)
+        scan_end = min(max(expected_pos + line_len * 2, search_pos + line_len * 5), total_gladia_chars)
 
-        # 完全一致を試みる
-        match_pos = gladia_text.find(line_norm, scan_start, scan_end)
+        # 完全一致を試みる（search_posから前方探索）
+        match_pos = gladia_text.find(line_norm, search_pos, scan_end)
 
         if match_pos >= 0:
             pos = match_pos
         else:
-            # あいまいマッチ: スライディングウィンドウで最高スコア位置を探索
-            best_pos = min(max(search_pos, expected_pos), total_gladia_chars - 1)
+            # あいまいマッチ: search_posからスライディングウィンドウ探索
+            best_pos = search_pos
             best_score = -1
             fuzzy_end = min(scan_end, total_gladia_chars - line_len + 1)
-            for p in range(scan_start, max(scan_start + 1, fuzzy_end)):
+            for p in range(search_pos, max(search_pos + 1, fuzzy_end)):
                 score = sum(1 for a, b in zip(line_norm, gladia_text[p:p + line_len]) if a == b)
                 if score > best_score:
                     best_score = score
                     best_pos = p
-            pos = best_pos
+            # マッチ品質が低い場合は比例位置にフォールバック
+            if best_score < line_len * 0.3:
+                pos = min(max(expected_pos, search_pos), total_gladia_chars - 1)
+            else:
+                pos = best_pos
 
         # タイムスタンプ取得
         pos = min(pos, total_gladia_chars - 1)
