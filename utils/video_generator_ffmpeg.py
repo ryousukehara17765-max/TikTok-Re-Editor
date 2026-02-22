@@ -46,7 +46,8 @@ class VideoGeneratorFFmpeg:
     """Pillow + FFmpegで動画生成（高速・高品質）"""
 
     # 縦書き時に回転が必要な文字
-    VERTICAL_ROTATE_CHARS = {'ー', '〜', '～', '－', '-', '―', '‐', '–', '—', '=', '＝', '+', '＋', '<', '>', '＜', '＞'}
+    VERTICAL_ROTATE_CHARS = {'ー', '〜', '～', '－', '-', '―', '‐', '–', '—', '=', '＝', '+', '＋', '<', '>', '＜', '＞',
+                              '【', '】', '「', '」', '『', '』', '（', '）', '(', ')', '[', ']', '［', '］', '〈', '〉', '《', '》', '〔', '〕'}
 
     # 小書き文字（右に寄せる）
     SMALL_CHARS = {'っ', 'ぁ', 'ぃ', 'ぅ', 'ぇ', 'ぉ', 'ゃ', 'ゅ', 'ょ', 'ゎ',
@@ -679,15 +680,16 @@ class VideoGeneratorFFmpeg:
             #    FFmpeg concat demuxerで一括処理するため、個別エンコード時の
             #    フレーム境界丸め誤差の蓄積が発生しない
 
-            # FIX 3: リードイン（音声冒頭の無音区間）をフレーム単位で検出
+            # FIX 3: リードイン（音声冒頭の無音区間）を最初のテロップに吸収
             raw_lead_in = segments[0]["start"]
             lead_in_frames = round(raw_lead_in / frame_duration)
-            lead_in_duration = lead_in_frames * frame_duration if lead_in_frames >= 1 else 0
-            print(f"[VIDEO TIMING] Lead-in: raw={raw_lead_in:.4f}s, frames={lead_in_frames}, aligned={lead_in_duration:.6f}s")
+            lead_in_duration = 0  # 空白フレームなし（最初のテロップを即表示）
+            print(f"[VIDEO TIMING] Lead-in: raw={raw_lead_in:.4f}s, frames={lead_in_frames}, absorbed into first segment")
 
             durations = []
             for i in range(total_clips):
-                start_time = segments[i]["start"]
+                # 最初のセグメントはtime=0から開始（リードイン吸収）
+                start_time = 0 if i == 0 else segments[i]["start"]
 
                 if i < total_clips - 1:
                     end_time = segments[i + 1]["start"]
