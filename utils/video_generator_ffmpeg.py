@@ -171,13 +171,14 @@ class VideoGeneratorFFmpeg:
             img = Image.new('RGB', (width, height), self.background_color)
         draw = ImageDraw.Draw(img)
 
-        # 白い長方形を描画（Y=288）
+        # 白い長方形を描画（Y=288）- テキストが空の場合はスキップ
         rect_x = (width - rect_width) // 2
         rect_y = 288
-        draw.rectangle(
-            [(rect_x, rect_y), (rect_x + rect_width, rect_y + rect_height)],
-            fill=(255, 255, 255)
-        )
+        if char_info:
+            draw.rectangle(
+                [(rect_x, rect_y), (rect_x + rect_width, rect_y + rect_height)],
+                fill=(255, 255, 255)
+            )
 
         # 縦書きテキスト描画（白背景はそのまま、文字のみ25px上）
         y_offset = rect_y + 5

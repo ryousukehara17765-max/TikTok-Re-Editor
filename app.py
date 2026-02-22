@@ -14,7 +14,10 @@ load_dotenv()
 
 
 def calculate_line_timestamps(lines, words):
-    """文字レベルの補間で各行のタイムスタンプを計算（単語境界ズレ解消）
+    """文字レベルの比例マッピングで各行のタイムスタンプを計算
+
+    ユーザーテキストとGladia文字起こしの文字数が一致しなくても
+    比例配分で正確にマッピングする。
 
     Args:
         lines: テキスト行のリスト
@@ -37,33 +40,46 @@ def calculate_line_timestamps(lines, words):
             ch_end = w['start'] + (word_duration * (ci + 1) / char_count)
             char_times.append((ch, ch_start, ch_end))
 
-    # 2. 各行の正規化文字列を文字タイムラインにマッチング
+    total_gladia_chars = len(char_times)
+
+    # ユーザーテキストの正規化文字数を計算
+    line_char_counts = []
+    for line in lines:
+        line_norm = normalize_for_timing(line)
+        line_char_counts.append(len(line_norm))
+    total_user_chars = sum(line_char_counts)
+
+    print(f"[TIMING] User chars: {total_user_chars}, Gladia chars: {total_gladia_chars}, Diff: {total_user_chars - total_gladia_chars}")
+
+    # フォールバック: どちらかが0の場合は均等分割
+    if total_gladia_chars == 0 or total_user_chars == 0:
+        total_duration = words[-1]['end'] if words else 1
+        segment_duration = total_duration / max(len(lines), 1)
+        return [{"start": i * segment_duration, "end": (i + 1) * segment_duration, "text": line}
+                for i, line in enumerate(lines)]
+
+    # 2. 比例マッピング: ユーザー文字の累積比率でGladia文字タイムラインの位置を決定
     segments = []
-    char_idx = 0
+    cumulative_chars = 0
 
     for line_idx, line in enumerate(lines):
-        line_norm = normalize_for_timing(line)
-        if not line_norm:
+        line_chars = line_char_counts[line_idx]
+        if line_chars == 0:
             continue
 
-        line_start_idx = char_idx
-        # この行の文字数分だけ文字タイムラインを消費
-        for _ in line_norm:
-            if char_idx < len(char_times):
-                char_idx += 1
+        # ユーザーテキスト全体に対する比率
+        start_ratio = cumulative_chars / total_user_chars
+        end_ratio = (cumulative_chars + line_chars) / total_user_chars
 
-        line_end_idx = char_idx - 1 if char_idx > line_start_idx else line_start_idx
+        # Gladiaタイムラインのインデックスに変換
+        start_idx = min(int(start_ratio * total_gladia_chars), total_gladia_chars - 1)
+        end_idx = min(int(end_ratio * total_gladia_chars) - 1, total_gladia_chars - 1)
+        end_idx = max(end_idx, start_idx)
 
-        # タイムスタンプを設定
-        if line_start_idx < len(char_times) and line_end_idx < len(char_times):
-            start_time = char_times[line_start_idx][1]
-            end_time = char_times[line_end_idx][2]
-        else:
-            # フォールバック: 均等分割
-            total_duration = words[-1]['end'] if words else 1
-            segment_duration = total_duration / len(lines)
-            start_time = line_idx * segment_duration
-            end_time = (line_idx + 1) * segment_duration
+        start_time = char_times[start_idx][1]
+        end_time = char_times[end_idx][2]
+
+        cumulative_chars += line_chars
 
         segments.append({
             "start": start_time,
