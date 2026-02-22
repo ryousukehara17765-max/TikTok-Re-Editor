@@ -1074,6 +1074,18 @@ with tab4:
                     segments = calculate_line_timestamps(lines, gladia_words)
                     validate_segments(segments)
                     status_text.text(f"単語レベルのタイムスタンプで同期: {len(segments)}行")
+
+                    # デバッグ: タイミング情報を表示
+                    with st.expander("タイミングデバッグ情報", expanded=False):
+                        st.markdown("**Gladia単語タイムスタンプ（最初の30語）:**")
+                        for wi, w in enumerate(gladia_words[:30]):
+                            st.text(f"  [{wi}] {w['start']:.2f}-{w['end']:.2f}s: '{w['word']}'")
+                        st.markdown("**計算されたセグメント:**")
+                        for si, seg in enumerate(segments):
+                            st.text(f"  [{si}] {seg['start']:.2f}-{seg['end']:.2f}s: '{seg['text'][:25]}'")
+                        st.markdown("**テロップ切り替えタイミング:**")
+                        for si in range(len(segments) - 1):
+                            st.text(f"  テロップ{si}→{si+1}: {segments[si+1]['start']:.3f}s 「{segments[si+1]['text'][:15]}」")
                 else:
                     # フォールバック: 均等分割
                     gladia_segments = st.session_state.timestamped_segments
@@ -1382,11 +1394,23 @@ if st.session_state.formatted_text:
                     if result and result.get("words"):
                         gladia_words = result["words"]
 
-                        # 文字レベル補間で各行のタイミングを計算（Tab 4と同じアルゴリズム）
+                        # 単語レベルのタイムスタンプで各行のタイミングを計算
                         segments = calculate_line_timestamps(lines, gladia_words)
                         validate_segments(segments)
 
                         status_text.text(f"タイムスタンプ取得完了: {len(segments)}行")
+
+                        # デバッグ: タイミング情報を表示
+                        with st.expander("タイミングデバッグ情報", expanded=False):
+                            st.markdown("**Gladia単語タイムスタンプ（最初の30語）:**")
+                            for wi, w in enumerate(gladia_words[:30]):
+                                st.text(f"  [{wi}] {w['start']:.2f}-{w['end']:.2f}s: '{w['word']}'")
+                            st.markdown("**計算されたセグメント:**")
+                            for si, seg in enumerate(segments):
+                                st.text(f"  [{si}] {seg['start']:.2f}-{seg['end']:.2f}s: '{seg['text'][:25]}'")
+                            st.markdown("**テロップ切り替えタイミング:**")
+                            for si in range(len(segments) - 1):
+                                st.text(f"  テロップ{si}→{si+1}: {segments[si+1]['start']:.3f}s 「{segments[si+1]['text'][:15]}」")
                     else:
                         if result is None:
                             st.error("タイムスタンプの取得に失敗しました（音声アップロードまたは文字起こしエラー）")
