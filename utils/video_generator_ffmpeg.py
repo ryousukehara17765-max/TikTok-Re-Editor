@@ -689,15 +689,17 @@ class VideoGeneratorFFmpeg:
             lead_in_duration = 0  # 空白フレームなし（最初のテロップを即表示）
             print(f"[VIDEO TIMING] Lead-in: raw={raw_lead_in:.4f}s, frames={lead_in_frames}, absorbed into first segment")
 
-            # FIX 8: 次セグメントの音声開始時刻でテロップ切り替え
-            #   単語レベルの実測タイムスタンプにより正確なstart値が得られるため、
-            #   segments[i+1]["start"]を境界として使用。
+            # FIX 8: テロップ切り替えタイミング
+            #   次セグメントの音声開始時刻 + 小さなバッファでテロップ切り替え。
+            #   バッファにより、現テロップが次の音声開始後もわずかに残り、
+            #   視聴者が「言い切り」を確認できる余裕を持たせる。
             #   絶対フレーム位置から差分でdurationを算出し、累積丸め誤差も防止。
+            TELOP_HANG_TIME = 0.25  # テロップ残留バッファ（秒）
             durations = []
             prev_frame = 0
             for i in range(total_clips):
                 if i < total_clips - 1:
-                    boundary_time = segments[i + 1]["start"]
+                    boundary_time = segments[i + 1]["start"] + TELOP_HANG_TIME
                 else:
                     boundary_time = total_audio_duration
 

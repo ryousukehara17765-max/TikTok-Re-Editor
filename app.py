@@ -1094,9 +1094,11 @@ with tab4:
                     for si, seg in enumerate(segments):
                         debug_lines.append(f"  [{si}] {seg['start']:.2f}-{seg['end']:.2f}s: '{seg['text'][:25]}'")
                     debug_lines.append("")
-                    debug_lines.append("**テロップ切り替えタイミング:**")
+                    debug_lines.append("**テロップ切り替えタイミング（実際のビデオ境界 = セグメント開始+0.25s）:**")
                     for si in range(len(segments) - 1):
-                        debug_lines.append(f"  テロップ{si}→{si+1}: {segments[si+1]['start']:.3f}s 「{segments[si+1]['text'][:15]}」")
+                        seg_start = segments[si+1]['start']
+                        actual_boundary = seg_start + 0.25  # TELOP_HANG_TIMEと同じ値
+                        debug_lines.append(f"  テロップ{si}→{si+1}: セグメント開始{seg_start:.3f}s → 実切替{actual_boundary:.3f}s 「{segments[si+1]['text'][:15]}」")
                     st.session_state['timing_debug'] = debug_lines
                 else:
                     # フォールバック: 均等分割
@@ -1431,9 +1433,11 @@ if st.session_state.formatted_text:
                         for si, seg in enumerate(segments):
                             debug_lines.append(f"  [{si}] {seg['start']:.2f}-{seg['end']:.2f}s: '{seg['text'][:25]}'")
                         debug_lines.append("")
-                        debug_lines.append("**テロップ切り替えタイミング:**")
+                        debug_lines.append("**テロップ切り替えタイミング（実際のビデオ境界 = セグメント開始+0.25s）:**")
                         for si in range(len(segments) - 1):
-                            debug_lines.append(f"  テロップ{si}→{si+1}: {segments[si+1]['start']:.3f}s 「{segments[si+1]['text'][:15]}」")
+                            seg_start = segments[si+1]['start']
+                            actual_boundary = seg_start + 0.25  # TELOP_HANG_TIMEと同じ値
+                            debug_lines.append(f"  テロップ{si}→{si+1}: セグメント開始{seg_start:.3f}s → 実切替{actual_boundary:.3f}s 「{segments[si+1]['text'][:15]}」")
                         st.session_state['timing_debug'] = debug_lines
                     else:
                         if result is None:
