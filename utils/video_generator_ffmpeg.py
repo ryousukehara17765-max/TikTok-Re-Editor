@@ -675,13 +675,13 @@ class VideoGeneratorFFmpeg:
             # 1. 各セグメントの表示時間を正確に計算
             #    FFmpeg concat demuxerで一括処理するため、個別エンコード時の
             #    フレーム境界丸め誤差の蓄積が発生しない
+
+            # リードイン（音声冒頭の無音区間）を検出
+            lead_in_duration = segments[0]["start"] if segments[0]["start"] > 0.01 else 0
+
             durations = []
             for i in range(total_clips):
-                # 最初のセグメントは音声冒頭(t=0)から表示（リードイン含む）
-                if i == 0:
-                    start_time = 0
-                else:
-                    start_time = segments[i]["start"]
+                start_time = segments[i]["start"]
 
                 if i < total_clips - 1:
                     end_time = segments[i + 1]["start"]
@@ -724,18 +724,40 @@ class VideoGeneratorFFmpeg:
                     img.save(path)
                     img_green_paths.append(path)
 
-            # 3. 画像+duration一覧から映像を1パスで生成（タイミング精度向上）
+            # 3. リードイン用の空白フレームを生成（音声冒頭の無音区間）
+            lead_in_t_entries = []
+            lead_in_p_entries = []
+            lead_in_g_entries = []
+            if lead_in_duration > 0:
+                print(f"リードイン: {lead_in_duration:.3f}s の空白フレームを追加")
+                if transparent:
+                    blank_t = self._create_text_image("", width, height, transparent=True)
+                    blank_t_path = os.path.join(temp_dir, "frame_t_leadin.png")
+                    blank_t.save(blank_t_path)
+                    lead_in_t_entries = [(blank_t_path, lead_in_duration)]
+
+                    blank_p = self._create_text_image("", width, height, checker=True)
+                    blank_p_path = os.path.join(temp_dir, "frame_p_leadin.png")
+                    blank_p.save(blank_p_path)
+                    lead_in_p_entries = [(blank_p_path, lead_in_duration)]
+                else:
+                    blank_g = self._create_text_image("", width, height, transparent=False)
+                    blank_g_path = os.path.join(temp_dir, "frame_leadin.png")
+                    blank_g.save(blank_g_path)
+                    lead_in_g_entries = [(blank_g_path, lead_in_duration)]
+
+            # 4. 画像+duration一覧から映像を1パスで生成（タイミング精度向上）
             print(f"全 {total_clips} セグメントの映像を一括生成中...")
 
             if transparent:
                 video_t_path = os.path.join(temp_dir, "video_transparent.mov")
                 self._create_video_from_images_concat(
-                    list(zip(img_transparent_paths, durations)),
+                    lead_in_t_entries + list(zip(img_transparent_paths, durations)),
                     video_t_path, fps, transparent=True)
 
                 video_p_path = os.path.join(temp_dir, "video_preview.mp4")
                 self._create_video_from_images_concat(
-                    list(zip(img_preview_paths, durations)),
+                    lead_in_p_entries + list(zip(img_preview_paths, durations)),
                     video_p_path, fps, transparent=False)
 
                 # 元の音声と結合
@@ -755,7 +777,7 @@ class VideoGeneratorFFmpeg:
             else:
                 video_path = os.path.join(temp_dir, "video.mp4")
                 self._create_video_from_images_concat(
-                    list(zip(img_green_paths, durations)),
+                    lead_in_g_entries + list(zip(img_green_paths, durations)),
                     video_path, fps, transparent=False)
 
                 output_path = os.path.join(temp_dir, "output.mp4")

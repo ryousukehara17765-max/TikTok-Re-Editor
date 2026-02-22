@@ -750,6 +750,7 @@ with tab4:
                         st.session_state.gladia_words = gladia_words  # 単語レベルのタイムスタンプ
                         st.session_state.audio_file_data = uploaded_audio.read()
                         uploaded_audio.seek(0)
+                        st.session_state.audio_file_ext = os.path.splitext(uploaded_audio.name)[1]  # .wav, .mp3等
                         st.session_state.filename = audio_filename
                         st.session_state.audio_upload_mode = True
                         st.session_state.audio_text_editor = formatted_text
@@ -808,47 +809,48 @@ with tab4:
 
                 # 単語レベルのタイムスタンプを使って各行のタイミングを計算
                 def calculate_line_timestamps(lines, words):
-                    """各行に含まれる単語を特定し、タイムスタンプを計算"""
+                    """文字レベルの補間で各行のタイムスタンプを計算（単語境界ズレ解消）"""
                     import re
 
                     # 句読点を除去する関数
                     def normalize(text):
                         return re.sub(r'[、。,.\s　]', '', text)
 
-                    # 全単語を結合した文字列
-                    all_words_text = ''.join([w['word'] for w in words])
-                    all_words_text_normalized = normalize(all_words_text)
+                    # 1. 文字単位のタイムラインを構築
+                    #    各単語の時間をその文字数で均等に分配
+                    char_times = []  # [(char, start, end), ...]
+                    for w in words:
+                        word_norm = normalize(w['word'])
+                        if not word_norm:
+                            continue
+                        char_count = len(word_norm)
+                        word_duration = w['end'] - w['start']
+                        for ci, ch in enumerate(word_norm):
+                            ch_start = w['start'] + (word_duration * ci / char_count)
+                            ch_end = w['start'] + (word_duration * (ci + 1) / char_count)
+                            char_times.append((ch, ch_start, ch_end))
 
-                    # 各行のテキスト（句読点除去）
-                    lines_normalized = [normalize(line) for line in lines]
-
+                    # 2. 各行の正規化文字列を文字タイムラインにマッチング
                     segments = []
-                    word_index = 0
-                    current_pos = 0  # 単語リスト内での文字位置
+                    char_idx = 0
 
                     for line_idx, line in enumerate(lines):
-                        line_norm = lines_normalized[line_idx]
+                        line_norm = normalize(line)
                         if not line_norm:
-                            # 空行の場合はスキップ
                             continue
 
-                        # この行の最初の単語を見つける
-                        start_word_idx = word_index
-                        chars_matched = 0
+                        line_start_idx = char_idx
+                        # この行の文字数分だけ文字タイムラインを消費
+                        for _ in line_norm:
+                            if char_idx < len(char_times):
+                                char_idx += 1
 
-                        # 行の文字数分の単語を消費
-                        while word_index < len(words) and chars_matched < len(line_norm):
-                            word = words[word_index]['word']
-                            word_norm = normalize(word)
-                            chars_matched += len(word_norm)
-                            word_index += 1
+                        line_end_idx = char_idx - 1 if char_idx > line_start_idx else line_start_idx
 
-                        end_word_idx = word_index - 1 if word_index > start_word_idx else start_word_idx
-
-                        # この行のタイムスタンプを設定
-                        if start_word_idx < len(words) and end_word_idx < len(words):
-                            start_time = words[start_word_idx]['start']
-                            end_time = words[end_word_idx]['end']
+                        # タイムスタンプを設定
+                        if line_start_idx < len(char_times) and line_end_idx < len(char_times):
+                            start_time = char_times[line_start_idx][1]
+                            end_time = char_times[line_end_idx][2]
                         else:
                             # フォールバック: 均等分割
                             total_duration = words[-1]['end'] if words else 1
@@ -888,8 +890,9 @@ with tab4:
 
                 progress_bar.progress(10)
 
-                # 一時ファイルに音声を保存
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_file:
+                # 一時ファイルに音声を保存（元の拡張子を維持）
+                audio_ext = st.session_state.get('audio_file_ext', '.wav')
+                with tempfile.NamedTemporaryFile(delete=False, suffix=audio_ext) as tmp_file:
                     tmp_file.write(st.session_state.audio_file_data)
                     tmp_audio_path = tmp_file.name
 
