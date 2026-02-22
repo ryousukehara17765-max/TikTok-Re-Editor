@@ -113,26 +113,57 @@ def validate_segments(segments):
 
 MAX_DISPLAY_CHARS = 14
 
+# 分割候補: 助詞・接続助詞・動詞終止・括弧閉じの後ろで区切る
+_SPLIT_AFTER = set('をにはがでともへてる】」』）')
+_MIN_SPLIT_SEGMENT = 4
+
 
 def split_long_lines(text, max_display_chars=MAX_DISPLAY_CHARS):
-    """表示文字数が上限を超える行を自動分割"""
+    """表示文字数が上限を超える行を文節境界で自動分割"""
     result_lines = []
     for line in text.split('\n'):
+        result_lines.extend(_split_line(line, max_display_chars))
+    return '\n'.join(result_lines)
+
+
+def _split_line(line, max_display_chars):
+    """1行を自然な位置で分割（再帰）"""
+    display_len = len(remove_punctuation_for_display(line))
+    if display_len <= max_display_chars:
+        return [line]
+
+    target = display_len / 2  # バランスの良い分割を狙う
+
+    # 分割候補を収集（助詞・括弧閉じ等の後ろ）
+    candidates = []
+    display_count = 0
+    for i, ch in enumerate(line):
+        if remove_punctuation_for_display(ch) != '':
+            display_count += 1
+        if ch in _SPLIT_AFTER and _MIN_SPLIT_SEGMENT <= display_count <= max_display_chars:
+            candidates.append((i + 1, display_count))
+
+    if candidates:
+        # targetに最も近い候補（同距離なら大きい方優先）
+        best = min(candidates, key=lambda c: (abs(c[1] - target), -c[1]))
+        split_idx = best[0]
+    else:
+        # フォールバック：上限で強制分割（句読点は前行に残す）
         display_count = 0
-        current = []
-        for ch in line:
+        split_idx = len(line)
+        for i, ch in enumerate(line):
             is_display = (remove_punctuation_for_display(ch) != '')
-            # 次の表示文字で上限超過なら、ここで分割（句読点は前の行に残す）
             if is_display and display_count >= max_display_chars:
-                result_lines.append(''.join(current))
-                current = []
-                display_count = 0
-            current.append(ch)
+                split_idx = i
+                break
             if is_display:
                 display_count += 1
-        if current:
-            result_lines.append(''.join(current))
-    return '\n'.join(result_lines)
+
+    first = line[:split_idx]
+    rest = line[split_idx:]
+    if not rest or not rest.strip():
+        return [line]
+    return [first] + _split_line(rest, max_display_chars)
 
 
 def check_line_overflow(text, max_display_chars=MAX_DISPLAY_CHARS):
