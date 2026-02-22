@@ -575,7 +575,23 @@ voicevox = VoiceVoxAPI(voicevox_url)
 # ===========================================
 # セクション1: 入力ソース選択
 # ===========================================
-st.header("1. 入力ソース選択")
+# リセットボタン（APIキーは保持）
+_sec1_col1, _sec1_col2 = st.columns([4, 1])
+with _sec1_col1:
+    st.header("1. 入力ソース選択")
+with _sec1_col2:
+    st.markdown("<div style='height: 20px'></div>", unsafe_allow_html=True)
+    if st.button("NEW", key="reset_btn"):
+        # APIキーとシステム系のキーを保持
+        preserve_keys = {'gladia_input', 'gemini_input', 'show_admin_panel'}
+        preserved = {k: st.session_state[k] for k in preserve_keys if k in st.session_state}
+        # 全セッションステートをクリア
+        for key in list(st.session_state.keys()):
+            del st.session_state[key]
+        # 保持するキーを復元
+        for k, v in preserved.items():
+            st.session_state[k] = v
+        st.rerun()
 
 tab1, tab2, tab3, tab4 = st.tabs(["動画から生成", "ファイルから生成", "テキスト入力", "🎵 音声アップロード"])
 
