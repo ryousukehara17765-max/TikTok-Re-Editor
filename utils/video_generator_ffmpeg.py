@@ -689,23 +689,22 @@ class VideoGeneratorFFmpeg:
             lead_in_duration = 0  # 空白フレームなし（最初のテロップを即表示）
             print(f"[VIDEO TIMING] Lead-in: raw={raw_lead_in:.4f}s, frames={lead_in_frames}, absorbed into first segment")
 
+            # FIX 6: 絶対フレーム位置で計算し、累積丸め誤差を防止
+            #   各セグメント境界を独立に丸めると誤差が蓄積し、
+            #   後半ほどテロップが音声より遅れる。
+            #   代わりに各境界の絶対フレーム位置を求めてから差分でdurationを算出。
             durations = []
+            prev_frame = 0
             for i in range(total_clips):
-                # 最初のセグメントはtime=0から開始（リードイン吸収）
-                start_time = 0 if i == 0 else segments[i]["start"]
-
                 if i < total_clips - 1:
-                    end_time = segments[i + 1]["start"]
+                    boundary_time = segments[i + 1]["start"]
                 else:
-                    end_time = total_audio_duration
+                    boundary_time = total_audio_duration
 
-                raw_duration = end_time - start_time
-
-                # FIX 2: durationをフレーム境界に丸める
-                num_frames = max(1, round(raw_duration / frame_duration))
-                duration = num_frames * frame_duration
-
+                end_frame = max(prev_frame + 1, round(boundary_time / frame_duration))
+                duration = (end_frame - prev_frame) * frame_duration
                 durations.append(duration)
+                prev_frame = end_frame
 
             # FIX 5: 映像合計時間を音声に一致させる（最終セグメントで調整）
             total_video_duration = lead_in_duration + sum(durations)
