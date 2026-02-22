@@ -3,7 +3,7 @@ import os
 import tempfile
 import base64
 from dotenv import load_dotenv
-from utils import normalize_for_timing
+from utils.text_normalize import normalize_for_timing
 from utils.transcription import GladiaAPI
 from utils.text_formatter import GeminiFormatter
 from utils.voicevox import VoiceVoxAPI

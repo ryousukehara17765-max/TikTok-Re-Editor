@@ -5,7 +5,7 @@ import shutil
 import subprocess
 import tempfile
 from PIL import Image, ImageDraw, ImageFont
-from utils import normalize_for_timing, remove_punctuation_for_display
+from utils.text_normalize import normalize_for_timing, remove_punctuation_for_display
 from utils.voicevox import VoiceVoxAPI
 
 
