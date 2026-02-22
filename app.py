@@ -62,7 +62,12 @@ def calculate_line_timestamps(lines, words):
                 for i, line in enumerate(lines)]
 
     # 2. Phase 1: 各行のGladiaテキスト内での開始位置を逐次探索
+    #    search_posはユーザー文字数ベースで進むため、Gladiaテキストの文字数が
+    #    少ない場合（例: 「数百万の差」→「数百の差」で「万」欠落）にオーバーシュート
+    #    する。min_search_posで絶対下限を保ちつつ、search_posから数文字戻って
+    #    探索することで文字数不一致を吸収する。
     search_pos = 0
+    min_search_pos = 0  # 前回マッチ位置+1（これより前には戻らない）
     cumulative_user_chars = 0
     matches = []  # [(gladia_pos, line_idx, line, line_norm)]
 
@@ -72,33 +77,37 @@ def calculate_line_timestamps(lines, words):
             continue
         line_len = len(line_norm)
 
-        # 探索範囲: search_posから前方を探索（比例位置もカバー）
+        # 文字数不一致を吸収: search_posから最大5文字戻って探索開始
+        actual_search = max(min_search_pos, search_pos - 5)
+
+        # 探索範囲
         expected_pos = round((cumulative_user_chars / total_user_chars) * total_gladia_chars)
-        scan_end = min(max(expected_pos + line_len * 2, search_pos + line_len * 5), total_gladia_chars)
+        scan_end = min(max(expected_pos + line_len * 2, actual_search + line_len * 5), total_gladia_chars)
 
         # 完全一致を試みる
-        match_pos = gladia_text.find(line_norm, search_pos, scan_end)
+        match_pos = gladia_text.find(line_norm, actual_search, scan_end)
 
         if match_pos >= 0:
             pos = match_pos
         else:
             # あいまいマッチ: スライディングウィンドウ探索
-            best_pos = search_pos
+            best_pos = actual_search
             best_score = -1
             fuzzy_end = min(scan_end, total_gladia_chars - line_len + 1)
-            for p in range(search_pos, max(search_pos + 1, fuzzy_end)):
+            for p in range(actual_search, max(actual_search + 1, fuzzy_end)):
                 score = sum(1 for a, b in zip(line_norm, gladia_text[p:p + line_len]) if a == b)
                 if score > best_score:
                     best_score = score
                     best_pos = p
             # マッチ品質が低い場合は比例位置にフォールバック
             if best_score < line_len * 0.3:
-                pos = min(max(expected_pos, search_pos), total_gladia_chars - 1)
+                pos = min(max(expected_pos, actual_search), total_gladia_chars - 1)
             else:
                 pos = best_pos
 
         pos = min(pos, total_gladia_chars - 1)
         matches.append((pos, line_idx, line, line_norm))
+        min_search_pos = pos + 1
         search_pos = pos + len(line_norm)
         cumulative_user_chars += line_len
 
