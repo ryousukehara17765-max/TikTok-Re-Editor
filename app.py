@@ -122,13 +122,14 @@ def split_long_lines(text, max_display_chars=MAX_DISPLAY_CHARS):
         current = []
         for ch in line:
             is_display = (remove_punctuation_for_display(ch) != '')
-            current.append(ch)
-            if is_display:
-                display_count += 1
-            if display_count >= max_display_chars:
+            # 次の表示文字で上限超過なら、ここで分割（句読点は前の行に残す）
+            if is_display and display_count >= max_display_chars:
                 result_lines.append(''.join(current))
                 current = []
                 display_count = 0
+            current.append(ch)
+            if is_display:
+                display_count += 1
         if current:
             result_lines.append(''.join(current))
     return '\n'.join(result_lines)
