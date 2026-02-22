@@ -14,10 +14,11 @@ load_dotenv()
 
 
 def calculate_line_timestamps(lines, words):
-    """文字レベルの比例マッピングで各行のタイムスタンプを計算
+    """逐次テキストマッチングで各行のタイムスタンプを計算
 
-    ユーザーテキストとGladia文字起こしの文字数が一致しなくても
-    比例配分で正確にマッピングする。
+    Gladiaの文字起こしテキストに対して各行を順にマッチングし、
+    正確なタイムスタンプを取得する。完全一致できない場合は
+    あいまいマッチングで最良位置を探索する。
 
     Args:
         lines: テキスト行のリスト
@@ -42,12 +43,9 @@ def calculate_line_timestamps(lines, words):
 
     total_gladia_chars = len(char_times)
 
-    # ユーザーテキストの正規化文字数を計算
-    line_char_counts = []
-    for line in lines:
-        line_norm = normalize_for_timing(line)
-        line_char_counts.append(len(line_norm))
-    total_user_chars = sum(line_char_counts)
+    # ユーザーテキストの正規化
+    line_norms = [normalize_for_timing(line) for line in lines]
+    total_user_chars = sum(len(ln) for ln in line_norms)
 
     print(f"[TIMING] User chars: {total_user_chars}, Gladia chars: {total_gladia_chars}, Diff: {total_user_chars - total_gladia_chars}")
 
@@ -58,28 +56,53 @@ def calculate_line_timestamps(lines, words):
         return [{"start": i * segment_duration, "end": (i + 1) * segment_duration, "text": line}
                 for i, line in enumerate(lines)]
 
-    # 2. 比例マッピング: ユーザー文字の累積比率でGladia文字タイムラインの位置を決定
+    # 2. Gladiaテキスト全文を構築
+    gladia_text = ''.join(ch for ch, _, _ in char_times)
+
+    # 3. 逐次マッチング: 各行をGladiaテキスト内で順に探索
+    search_pos = 0
+    cumulative_user_chars = 0
     segments = []
-    cumulative_chars = 0
 
     for line_idx, line in enumerate(lines):
-        line_chars = line_char_counts[line_idx]
-        if line_chars == 0:
+        line_norm = line_norms[line_idx]
+        if not line_norm:
             continue
+        line_len = len(line_norm)
 
-        # ユーザーテキスト全体に対する比率
-        start_ratio = cumulative_chars / total_user_chars
-        end_ratio = (cumulative_chars + line_chars) / total_user_chars
+        # 比例位置を推定（探索範囲のガイド）
+        expected_pos = round((cumulative_user_chars / total_user_chars) * total_gladia_chars)
+        scan_start = max(search_pos, expected_pos - line_len)
+        scan_end = min(max(expected_pos + line_len * 3, search_pos + line_len * 3), total_gladia_chars)
 
-        # Gladiaタイムラインのインデックスに変換
-        start_idx = min(int(start_ratio * total_gladia_chars), total_gladia_chars - 1)
-        end_idx = min(int(end_ratio * total_gladia_chars) - 1, total_gladia_chars - 1)
-        end_idx = max(end_idx, start_idx)
+        # 完全一致を試みる
+        match_pos = gladia_text.find(line_norm, scan_start, scan_end)
 
-        start_time = char_times[start_idx][1]
-        end_time = char_times[end_idx][2]
+        if match_pos >= 0:
+            pos = match_pos
+        else:
+            # あいまいマッチ: スライディングウィンドウで最高スコア位置を探索
+            best_pos = min(max(search_pos, expected_pos), total_gladia_chars - 1)
+            best_score = -1
+            fuzzy_end = min(scan_end, total_gladia_chars - line_len + 1)
+            for p in range(scan_start, max(scan_start + 1, fuzzy_end)):
+                score = sum(1 for a, b in zip(line_norm, gladia_text[p:p + line_len]) if a == b)
+                if score > best_score:
+                    best_score = score
+                    best_pos = p
+            pos = best_pos
 
-        cumulative_chars += line_chars
+        # タイムスタンプ取得
+        pos = min(pos, total_gladia_chars - 1)
+        end_pos = min(pos + line_len - 1, total_gladia_chars - 1)
+
+        start_time = char_times[pos][1]
+        end_time = char_times[end_pos][2]
+
+        print(f"[TIMING] Line {line_idx}: pos={pos}, '{line_norm[:15]}' -> {start_time:.3f}s-{end_time:.3f}s")
+
+        search_pos = end_pos + 1
+        cumulative_user_chars += line_len
 
         segments.append({
             "start": start_time,
